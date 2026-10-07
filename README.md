@@ -1,5 +1,7 @@
 # Decision 2.0 for Runpod Serverless
 
+[![Runpod](https://api.runpod.io/badge/kodxana/decision2-serverless)](https://console.runpod.io/hub/listing/kodxana/decision2-serverless)
+
 Run classification, yes/no probability scoring, and ordinal scoring with
 [Decision 2.0](https://huggingface.co/collections/vllm-sr/decision-20).
 
@@ -10,7 +12,7 @@ can be loaded from Runpod Model Store or network storage.
 ## Quick start
 
 1. Deploy the Hub template as a **queue-based Serverless endpoint**.
-2. Keep the default model:
+2. Keep **Lux 9B (included)** in the model selector. This sets:
 
    ```dotenv
    MODEL_ID=vllm-sr/Decision-2.0-Lux-9B
@@ -32,7 +34,8 @@ can be loaded from Runpod Model Store or network storage.
 ## Choose a model
 
 Change `MODEL_ID` in the endpoint's environment variables and restart the
-workers. For example:
+workers. The Hub model selector sets this variable during deployment; it does
+not attach storage or change the GPU. For example:
 
 ```dotenv
 MODEL_ID=vllm-sr/Decision-2.0-Vega-27B
@@ -163,3 +166,10 @@ Supported question types:
 See [`examples/request.json`](examples/request.json) for all three types in one
 request. The default request limits are **8 questions** and **128 KiB** of input;
 each model also has an input token limit.
+
+## License
+
+This worker is licensed under [Apache 2.0](LICENSE).
+[Decision 2.0](https://huggingface.co/collections/vllm-sr/decision-20) and
+[Qwen3.8-27B](https://huggingface.co/Qwen/Qwen3.8-27B) retain their upstream
+licenses. License files are preserved alongside downloaded model files.

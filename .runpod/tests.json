@@ -1,0 +1,89 @@
+{
+  "tests": [
+    {
+      "name": "classify_support_request",
+      "input": {
+        "state": "The order arrived damaged yesterday. The customer has a receipt and asks for a replacement today.",
+        "questions": {
+          "route": {
+            "type": "choice",
+            "instructions": "Which team should handle this request?",
+            "criteria": {
+              "returns": "Refunds, replacements and damaged deliveries",
+              "billing": "Payments, invoices and charges",
+              "technical": "Product setup and faults"
+            }
+          }
+        }
+      },
+      "timeout": 120000
+    },
+    {
+      "name": "estimate_yes_no_probability",
+      "input": {
+        "state": "The customer has a receipt and wants to return a damaged order.",
+        "questions": {
+          "receipt": {
+            "type": "noul",
+            "instructions": "Does the customer have a receipt?"
+          }
+        }
+      },
+      "timeout": 120000
+    },
+    {
+      "name": "score_urgency",
+      "input": {
+        "state": "The order arrived damaged and the customer needs a replacement today.",
+        "questions": {
+          "urgency": {
+            "type": "score",
+            "instructions": "How urgent is this request?",
+            "criteria": ["Routine", "Soon", "Today"]
+          }
+        }
+      },
+      "timeout": 120000
+    },
+    {
+      "name": "mixed_questions_with_json_state",
+      "input": {
+        "state": {
+          "order_condition": "damaged",
+          "receipt_available": true,
+          "request": "replacement today"
+        },
+        "questions": {
+          "route": {
+            "type": "choice",
+            "instructions": "Which team should handle this request?",
+            "criteria": {
+              "returns": "Refunds, replacements and damaged deliveries",
+              "billing": "Payments, invoices and charges",
+              "technical": "Product setup and faults"
+            }
+          },
+          "receipt": {
+            "type": "noul",
+            "instructions": "Does the customer have a receipt?"
+          },
+          "urgency": {
+            "type": "score",
+            "instructions": "How urgent is this request?",
+            "criteria": ["Routine", "Soon", "Today"]
+          }
+        }
+      },
+      "timeout": 120000
+    }
+  ],
+  "config": {
+    "gpuTypeId": "NVIDIA A40",
+    "gpuCount": 1,
+    "env": [
+      {"key": "MODEL_ID", "value": "vllm-sr/Decision-2.0-Lux-9B"},
+      {"key": "RUNPOD_INIT_TIMEOUT", "value": "600"}
+    ],
+    "allowedCudaVersions": ["12.8", "12.9", "13.0"]
+  }
+}

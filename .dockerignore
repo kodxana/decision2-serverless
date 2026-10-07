@@ -8,5 +8,6 @@
 !models.json
 !bake_model.py
 !smoke_test.py
+!LICENSE
 !examples/
 !examples/*.json

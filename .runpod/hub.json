@@ -1,0 +1,75 @@
+{
+  "title": "Decision 2.0",
+  "description": "Classify text or JSON, estimate yes/no probabilities, and score ordered criteria with Decision 2.0. Lux 9B is included and ready to run; five other model sizes are selectable.",
+  "type": "serverless",
+  "category": "language",
+  "config": {
+    "runsOn": "GPU",
+    "containerDiskInGb": 80,
+    "gpuCount": 1,
+    "gpuIds": "AMPERE_48,ADA_48_PRO",
+    "allowedCudaVersions": ["12.8", "12.9", "13.0"],
+    "presets": [
+      {
+        "name": "Lux 9B (included)",
+        "defaults": {
+          "MODEL_ID": "vllm-sr/Decision-2.0-Lux-9B"
+        }
+      }
+    ],
+    "env": [
+      {
+        "key": "MODEL_ID",
+        "input": {
+          "name": "Decision model",
+          "type": "string",
+          "description": "Lux runs without additional storage. Smaller models need Model Store or a network volume. Vega needs its Qwen base plus a larger GPU; see the README before selecting it.",
+          "required": true,
+          "default": "vllm-sr/Decision-2.0-Lux-9B",
+          "options": [
+            {"label": "Lux 9B (included)", "value": "vllm-sr/Decision-2.0-Lux-9B"},
+            {"label": "Kai 0.6B (1.52 GB download)", "value": "vllm-sr/Decision-2.0-Kai-0.6B"},
+            {"label": "Eos 0.8B (2.04 GB download)", "value": "vllm-sr/Decision-2.0-Eos-0.8B"},
+            {"label": "Sol 2B (4.81 GB download)", "value": "vllm-sr/Decision-2.0-Sol-2B"},
+            {"label": "Nox 4B (9.72 GB download)", "value": "vllm-sr/Decision-2.0-Nox-4B"},
+            {"label": "Vega 27B (included adapter; Qwen base and larger GPU required)", "value": "vllm-sr/Decision-2.0-Vega-27B"}
+          ]
+        }
+      },
+      {
+        "key": "MODEL_ROOT",
+        "input": {
+          "name": "Model download directory",
+          "type": "string",
+          "description": "Writable directory on an attached network volume for models missing from the image or Model Store. Lux does not use this directory.",
+          "default": "/runpod-volume/models",
+          "advanced": true
+        }
+      },
+      {
+        "key": "MODEL_DOWNLOAD_TIMEOUT",
+        "input": {
+          "name": "Model download timeout (seconds)",
+          "type": "number",
+          "description": "Maximum time for the first download to network storage.",
+          "default": 1800,
+          "min": 60,
+          "max": 7200,
+          "advanced": true
+        }
+      },
+      {
+        "key": "RUNPOD_INIT_TIMEOUT",
+        "input": {
+          "name": "Worker startup timeout (seconds)",
+          "type": "number",
+          "description": "Time allowed to prepare and load the model. Use at least 3600 seconds for Vega's first Qwen download.",
+          "default": 600,
+          "min": 60,
+          "max": 7200,
+          "advanced": true
+        }
+      }
+    ]
+  }
+}

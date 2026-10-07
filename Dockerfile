@@ -42,7 +42,7 @@ RUN python bake_model.py --verify-only
 ENV MODEL_ID=${MODEL_ID} \
     HF_HUB_OFFLINE=1 \
     TRANSFORMERS_OFFLINE=1
-COPY app.py model_storage.py handler.py smoke_test.py ./
+COPY app.py model_storage.py handler.py smoke_test.py LICENSE ./
 COPY examples ./examples
 # Explicitly replace any inherited Pod startup script with the queue worker.
 ENTRYPOINT ["python", "-u", "/opt/decision2/handler.py"]
