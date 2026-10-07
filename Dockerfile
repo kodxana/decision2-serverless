@@ -22,13 +22,12 @@ RUN python -c "import torch; assert torch.__version__.split('+')[0] == '2.8.0', 
     && python -c "import torch, transformers, runpod; assert torch.__version__.split('+')[0] == '2.8.0'" \
     && mkdir -p /opt/model-cache
 
-# Download the complete pinned package as regular files (no cache symlinks).
-# Lux is self-contained and downloads ~17.95 GB. Larger models can live on a volume.
+# Download all six pinned Decision packages (~51.02 GB) as regular files.
+# Vega's separate Qwen base stays in Model Store or on a network volume.
 # A code-only edit below this layer reuses these downloads when cache is available.
 FROM runtime AS model
 COPY models.json bake_model.py ./
-ARG MODEL_ID
-RUN python bake_model.py --model-id "$MODEL_ID" --destination /opt/models/decision2
+RUN python bake_model.py --all --destination /opt/models
 
 # Copy the checked package into its own immutable layer, independent of download
 # staging. Verify the final filesystem as well as the download-stage filesystem.

@@ -1,4 +1,4 @@
-"""Bake a pinned Decision 2.0 package and its required base into an image layer."""
+"""Bake pinned Decision packages; the all-model image leaves Qwen external."""
 
 import argparse
 import hashlib
@@ -80,14 +80,16 @@ def base_spec(manifest, entry):
     return base
 
 
-def verify_baked_model(metadata_path):
-    """Check both artifact trees after the final Docker stage copies them."""
-    metadata = json.loads(Path(metadata_path).read_text(encoding="utf-8"))
-    catalog = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
+def verify_baked_entry(metadata, catalog, *, allow_external_base=False):
+    """Verify one package and either its baked base or external base identity."""
     entry = catalog[metadata["model_id"]]
     if metadata["revision"] != entry["revision"]:
         raise ValueError("Baked model revision differs from models.json")
     manifest = verify_files(metadata["path"])
+    if allow_external_base:
+        raw = (Path(metadata["path"]) / "MODEL_MANIFEST.json").read_bytes()
+        if hashlib.sha256(raw).hexdigest() != entry["manifest_sha256"]:
+            raise ValueError("Baked model manifest differs from the pinned revision")
     if manifest["model_name"] != metadata["model_id"].split("/")[-1]:
         raise ValueError("Downloaded manifest names a different model")
     base = base_spec(manifest, entry)
@@ -96,14 +98,34 @@ def verify_baked_model(metadata_path):
         if (not isinstance(baked_base, dict) or baked_base.get("model_id") != base["repo_id"]
                 or baked_base.get("revision") != base["revision"]):
             raise ValueError("Baked base identity differs from its manifest")
-        verify_tree(baked_base["path"], base["files_sha256"], {"LICENSE"})
+        if allow_external_base and baked_base.get("external") is True:
+            if "path" in baked_base:
+                raise ValueError("External base must not claim a baked path")
+        else:
+            verify_tree(baked_base["path"], base["files_sha256"], {"LICENSE"})
     elif baked_base:
         raise ValueError("Unexpected baked base for a self-contained model")
     return metadata
 
 
+def verify_baked_model(metadata_path):
+    """Check the final image's complete inventory without fetching external bases."""
+    metadata = json.loads(Path(metadata_path).read_text(encoding="utf-8"))
+    catalog = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
+    if "models" not in metadata:
+        return verify_baked_entry(metadata, catalog)
+    if (metadata.get("default_model") != DEFAULT_MODEL
+            or set(metadata["models"]) != set(catalog)):
+        raise ValueError("Baked model collection differs from models.json")
+    for model_id, info in metadata["models"].items():
+        if info.get("model_id") != model_id:
+            raise ValueError("Baked model collection identity mismatch")
+        verify_baked_entry(info, catalog, allow_external_base=True)
+    return metadata
+
+
 def bake(model_id, destination, base_destination, metadata_path, *, download,
-         existing_model=None, existing_base=None):
+         existing_model=None, existing_base=None, skip_base=False):
     catalog = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
     if model_id not in catalog:
         raise ValueError("Select a model from models.json")
@@ -125,6 +147,10 @@ def bake(model_id, destination, base_destination, metadata_path, *, download,
         verify_hashes(destination, manifest["files_sha256"], allow_symlinks=True)
     if manifest["model_name"] != model_id.split("/")[-1]:
         raise ValueError("Downloaded manifest names a different model")
+    if skip_base:
+        raw = (destination / "MODEL_MANIFEST.json").read_bytes()
+        if hashlib.sha256(raw).hexdigest() != entry["manifest_sha256"]:
+            raise ValueError("Model manifest differs from the pinned revision")
     base = base_spec(manifest, entry)
     if existing_base is not None and base is None:
         raise ValueError("This model does not use an external base")
@@ -134,7 +160,11 @@ def bake(model_id, destination, base_destination, metadata_path, *, download,
         "path": str(destination),
         "files_verified": len(manifest["files_sha256"]),
     }
-    if base:
+    if skip_base and existing_base is not None:
+        raise ValueError("Cannot skip and supply the base at the same time")
+    if base and skip_base:
+        metadata["base"] = {"model_id": base["repo_id"], "revision": base["revision"], "external": True}
+    elif base:
         print(f"Baking base {base['repo_id']}@{base['revision']} into {base_destination}", flush=True)
         if existing_base is None:
             download(
@@ -152,10 +182,24 @@ def bake(model_id, destination, base_destination, metadata_path, *, download,
             "model_id": base["repo_id"], "revision": base["revision"],
             "path": str(base_destination), "files_verified": len(base["files_sha256"]),
         }
-    Path(metadata_path).write_text(
-        json.dumps(metadata, indent=2) + "\n", encoding="utf-8"
-    )
+    if metadata_path is not None:
+        Path(metadata_path).write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(metadata), flush=True)
+    return metadata
+
+
+def bake_all(destination, metadata_path, *, download):
+    """Include every Decision package, with no download of Vega's Qwen base."""
+    catalog = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
+    root = Path(destination)
+    models = {}
+    for model_id in catalog:
+        models[model_id] = bake(
+            model_id, root / model_id.split("/")[-1], root / ".unused-base", None,
+            download=download, skip_base=True,
+        )
+    metadata = {"default_model": DEFAULT_MODEL, "models": models}
+    Path(metadata_path).write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
     return metadata
 
 
@@ -168,10 +212,15 @@ def main():
     parser.add_argument("--verify-only", action="store_true")
     parser.add_argument("--existing-model", type=Path)
     parser.add_argument("--existing-base", type=Path)
+    parser.add_argument("--all", action="store_true", help="Bake all Decision packages without external bases")
     args = parser.parse_args()
     if args.verify_only:
         print(json.dumps(verify_baked_model(args.metadata)), flush=True)
-        print("Final model and base checksums verified", flush=True)
+        print("All baked files verified; external base weights are supplied at runtime", flush=True)
+    elif args.all:
+        from huggingface_hub import snapshot_download
+
+        bake_all(args.destination, args.metadata, download=snapshot_download)
     else:
         from huggingface_hub import snapshot_download
 

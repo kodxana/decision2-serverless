@@ -13,12 +13,25 @@ LOGGER = logging.getLogger(__name__)
 CATALOG = json.loads(Path(__file__).with_name("models.json").read_text(encoding="utf-8"))
 
 
-def baked_model_info(metadata_path=None):
+def baked_model_info(metadata_path=None, model_id=None):
     """Fail before model loading if the baked artifact is absent or inconsistent."""
     path = Path(metadata_path) if metadata_path else Path(__file__).with_name("baked-model.json")
     if not path.is_file():
         raise RuntimeError("Baked model metadata is missing; build this image with bake_model.py")
-    info = json.loads(path.read_text(encoding="utf-8"))
+    metadata = json.loads(path.read_text(encoding="utf-8"))
+    collection = "models" in metadata
+    if collection:
+        if (not isinstance(metadata["models"], dict) or set(metadata["models"]) != set(CATALOG)
+                or metadata.get("default_model") not in CATALOG):
+            raise RuntimeError("Baked model collection differs from models.json; rebuild the image")
+        selected = model_id or metadata["default_model"]
+        info = metadata["models"][selected]
+        if info.get("model_id") != selected:
+            raise RuntimeError("Baked model identity differs from its collection")
+    else:
+        info = metadata
+        if model_id is not None and model_id != info.get("model_id"):
+            return None
     model_id = info.get("model_id")
     if model_id not in CATALOG or info.get("revision") != CATALOG[model_id]["revision"]:
         raise RuntimeError("Baked model identity differs from models.json; rebuild the image")
@@ -31,7 +44,10 @@ def baked_model_info(metadata_path=None):
         if (not isinstance(base, dict) or base.get("model_id") != entry["base_model"]
                 or base.get("revision") != entry["base_revision"]):
             raise RuntimeError("Baked base identity is missing or differs from models.json")
-        if not base.get("path") or not (Path(base["path"]) / "config.json").is_file():
+        if collection and base.get("external") is True:
+            if "path" in base:
+                raise RuntimeError("External base must not claim a baked path")
+        elif not base.get("path") or not (Path(base["path"]) / "config.json").is_file():
             raise RuntimeError("Baked base files are missing; do not mount over /opt/models")
     elif base:
         raise RuntimeError("Unexpected baked base for a self-contained model")
@@ -72,12 +88,15 @@ def selected_model_info(metadata_path=None):
     model_id = os.getenv("MODEL_ID", baked["model_id"])
     if model_id not in CATALOG:
         raise ValueError("MODEL_ID must name a Decision 2.0 model from models.json")
+    if model_id != baked["model_id"]:
+        baked = baked_model_info(metadata_path, model_id)
     entry = CATALOG[model_id]
     override = os.getenv("MODEL_PATH")
     base_override = os.getenv("BASE_MODEL_PATH")
     if base_override is not None and not entry.get("base_model"):
         raise ValueError("BASE_MODEL_PATH is only used by models with an external base, such as Vega")
-    if override is None and model_id == baked["model_id"] and base_override is None:
+    if (override is None and baked is not None and base_override is None
+            and not baked.get("base", {}).get("external")):
         return {**baked, "source": "baked"}
 
     root = Path(os.getenv("MODEL_ROOT", "/runpod-volume/models"))
@@ -85,7 +104,7 @@ def selected_model_info(metadata_path=None):
     if base_override is not None:
         base_path = local_model_path(base_override, "BASE_MODEL_PATH")
     elif entry.get("base_model"):
-        if model_id == baked["model_id"] and baked.get("base"):
+        if baked and baked.get("base", {}).get("path"):
             base_path = Path(baked["base"]["path"])
         else:
             base_path = cached_snapshot(entry["base_model"], entry["base_revision"])
@@ -93,20 +112,20 @@ def selected_model_info(metadata_path=None):
     source = "storage"
     if override is not None:
         model_path = local_model_path(override, "MODEL_PATH")
-    elif model_id == baked["model_id"]:
+    elif baked is not None:
         model_path = local_model_path(baked["path"], "MODEL_PATH")
         source = "baked"
     else:
         model_path = cached_snapshot(model_id, entry["revision"])
         if model_path is not None:
             source = "model-store"
-        if model_path is None or (entry.get("base_model") and base_path is None):
-            # Download only the missing component; mounted cache files stay untouched.
-            model_path, stored_base = ensure_stored_model(
-                root, model_id, entry, model_path=model_path, base_path=base_path,
-            )
-            if entry.get("base_model"):
-                base_path = stored_base
+    if override is None and (model_path is None or (entry.get("base_model") and base_path is None)):
+        # Baked Vega is reused directly; only its missing Qwen base is downloaded.
+        model_path, stored_base = ensure_stored_model(
+            root, model_id, entry, model_path=model_path, base_path=base_path,
+        )
+        if entry.get("base_model"):
+            base_path = stored_base
     manifest_path = model_path / "MODEL_MANIFEST.json"
     if not manifest_path.is_file():
         raise RuntimeError(f"Model manifest is missing: {manifest_path}")
