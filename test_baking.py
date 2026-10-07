@@ -11,6 +11,8 @@ from unittest.mock import Mock, patch
 from app import CATALOG, DecisionWorker, baked_model_info
 from bake_model import DEFAULT_MODEL, bake, base_spec, verify_baked_model, verify_files
 
+VEGA_MODEL = "vllm-sr/Decision-2.0-Vega-27B"
+
 
 class BakingTests(unittest.TestCase):
     def setUp(self):
@@ -56,7 +58,7 @@ class BakingTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "metadata is missing"):
             baked_model_info(self.root / "missing.json")
 
-    def test_identity_must_match_baked_revision_and_runtime_selection(self):
+    def test_identity_must_match_baked_revision_independently_of_runtime_selection(self):
         model_id = "vllm-sr/Decision-2.0-Lux-9B"
         info = {"model_id": model_id, "revision": CATALOG[model_id]["revision"], "path": str(self.model)}
         metadata = self.root / "baked-model.json"
@@ -64,8 +66,7 @@ class BakingTests(unittest.TestCase):
         with patch.dict("os.environ", {"MODEL_ID": model_id}):
             self.assertEqual(baked_model_info(metadata), info)
         with patch.dict("os.environ", {"MODEL_ID": "vllm-sr/Decision-2.0-Kai-0.6B"}):
-            with self.assertRaisesRegex(ValueError, "build time"):
-                baked_model_info(metadata)
+            self.assertEqual(baked_model_info(metadata), info)
         info["revision"] = "0" * 40
         metadata.write_text(json.dumps(info))
         with self.assertRaisesRegex(RuntimeError, "identity differs"):
@@ -80,11 +81,11 @@ class AdapterBakingTests(unittest.TestCase):
         self.model = self.root / "model"
         self.base = self.root / "base"
         self.metadata = self.root / "baked-model.json"
-        self.entry = CATALOG[DEFAULT_MODEL]
+        self.entry = CATALOG[VEGA_MODEL]
         self.model_files = {"adapter/weights.bin": b"adapter fixture"}
         self.base_files = {"config.json": b"{}", "weights.bin": b"base fixture"}
         self.manifest = {
-            "model_name": DEFAULT_MODEL.split("/")[-1], "profile": "qwen-adapter",
+            "model_name": VEGA_MODEL.split("/")[-1], "profile": "qwen-adapter",
             "files_sha256": self.hashes(self.model_files),
             "base": {"repo_id": self.entry["base_model"], "revision": self.entry["base_revision"],
                      "files_sha256": self.hashes(self.base_files)},
@@ -96,7 +97,7 @@ class AdapterBakingTests(unittest.TestCase):
         return {name: hashlib.sha256(content).hexdigest() for name, content in files.items()}
 
     def fake_download(self, *, repo_id, revision, local_dir, allow_patterns=None):
-        if repo_id == DEFAULT_MODEL:
+        if repo_id == VEGA_MODEL:
             files = {**self.model_files, "MODEL_MANIFEST.json": json.dumps(self.manifest).encode()}
         else:
             files = {**self.base_files, "LICENSE": b"base license fixture"}
@@ -106,7 +107,7 @@ class AdapterBakingTests(unittest.TestCase):
             target.write_bytes(content)
 
     def run_bake(self):
-        return bake(DEFAULT_MODEL, self.model, self.base, self.metadata, download=self.download)
+        return bake(VEGA_MODEL, self.model, self.base, self.metadata, download=self.download)
 
     def test_bakes_pinned_adapter_and_base_and_verifies_final_copy(self):
         info = self.run_bake()
@@ -117,7 +118,7 @@ class AdapterBakingTests(unittest.TestCase):
         self.assertEqual(calls[1].kwargs["revision"], self.entry["base_revision"])
         self.assertEqual(calls[1].kwargs["allow_patterns"], ["LICENSE", "config.json", "weights.bin"])
         self.assertEqual(verify_baked_model(self.metadata), info)
-        with patch.dict("os.environ", {"MODEL_ID": DEFAULT_MODEL}):
+        with patch.dict("os.environ", {"MODEL_ID": VEGA_MODEL}):
             self.assertEqual(baked_model_info(self.metadata), info)
 
     def test_corrupted_or_missing_base_fails_final_verification(self):
@@ -144,7 +145,7 @@ class AdapterBakingTests(unittest.TestCase):
 
     def test_missing_or_mismatched_base_metadata_fails_before_loading(self):
         info = self.run_bake()
-        with patch.dict("os.environ", {"MODEL_ID": DEFAULT_MODEL}):
+        with patch.dict("os.environ", {"MODEL_ID": VEGA_MODEL}):
             for bad_base in (None, {**info["base"], "revision": "0" * 40}):
                 self.metadata.write_text(json.dumps({**info, "base": bad_base}))
                 with self.assertRaisesRegex(RuntimeError, "Baked base identity"):
@@ -157,7 +158,7 @@ class AdapterBakingTests(unittest.TestCase):
     def test_runtime_passes_local_base_to_custom_loader(self):
         info = self.run_bake()
         loader = Mock()
-        with patch("app.baked_model_info", return_value=info), \
+        with patch("app.selected_model_info", return_value={**info, "source": "baked"}), \
                 patch.dict("os.environ", {"DEVICE": "cpu"}), \
                 patch.dict("sys.modules", {"torch": SimpleNamespace(),
                                           "transformers": SimpleNamespace(AutoModel=loader)}):
@@ -172,7 +173,7 @@ class AdapterBakingTests(unittest.TestCase):
         self.manifest = {"profile": "qwen-full", "model_name": lux.split("/")[-1],
                          "files_sha256": self.hashes(self.model_files)}
         def full_download(**kwargs):
-            kwargs["repo_id"] = DEFAULT_MODEL
+            kwargs["repo_id"] = VEGA_MODEL
             return self.fake_download(**kwargs)
         download = Mock(side_effect=full_download)
         info = bake(lux, self.model, self.base, self.metadata, download=download)

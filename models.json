@@ -1,28 +1,33 @@
 {
   "vllm-sr/Decision-2.0-Kai-0.6B": {
     "revision": "cd49ea3813fd8ba0928a9a23ef6c9a0f2f0cd764",
-    "approx_download_gb": 1.520,
-    "max_input_tokens": 8192
+    "approx_download_gb": 1.52,
+    "max_input_tokens": 8192,
+    "manifest_sha256": "ca7bf2cff1494a5bfc51f4271f52557da0f3ce3b6f0f6e7a2b4118cb4965e92e"
   },
   "vllm-sr/Decision-2.0-Eos-0.8B": {
     "revision": "3594047d69f476f1d01cf84c593e213fc3a4dfe0",
-    "approx_download_gb": 2.040,
-    "max_input_tokens": 16384
+    "approx_download_gb": 2.04,
+    "max_input_tokens": 16384,
+    "manifest_sha256": "e8b1081be4a76deca5247792a4031c8e19e2b52b95d91775c13d9e257c407101"
   },
   "vllm-sr/Decision-2.0-Sol-2B": {
     "revision": "64235bef55dad29387dd16da7c90e038bf2f0972",
     "approx_download_gb": 4.811,
-    "max_input_tokens": 16384
+    "max_input_tokens": 16384,
+    "manifest_sha256": "a91c440ca371668d488a788bdfe12cc574a97123df60730afedf419737ced970"
   },
   "vllm-sr/Decision-2.0-Nox-4B": {
     "revision": "25e8f67d1b486c647222df3aac640d2d5d736bbe",
     "approx_download_gb": 9.716,
-    "max_input_tokens": 16384
+    "max_input_tokens": 16384,
+    "manifest_sha256": "49771ea33a451274687ad2a246ce5fb78f8f42ec904fc91a467477179975bb16"
   },
   "vllm-sr/Decision-2.0-Lux-9B": {
     "revision": "78bf3c03d9147aeb30b641edfe0e30ed04887ca5",
     "approx_download_gb": 17.948,
-    "max_input_tokens": 16384
+    "max_input_tokens": 16384,
+    "manifest_sha256": "4e0f4ca0cf3c833933f9bed3021012d061910016c9f4ca43b34f5d66e8d0a260"
   },
   "vllm-sr/Decision-2.0-Vega-27B": {
     "revision": "7aec49ae11a18741706da549ab626b9052795fe7",
@@ -31,6 +36,7 @@
     "base_model": "Qwen/Qwen3.8-27B",
     "base_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
     "approx_repository_gb": 14.983,
-    "approx_base_gb": 55.586
+    "approx_base_gb": 55.586,
+    "manifest_sha256": "24dcf251f5b50a2259201cc5e11889b6d2545afd4ccecabb0e2344549542bdd3"
   }
 }

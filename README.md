@@ -1,203 +1,198 @@
-# Decision 2.0 Vega 27B — baked Runpod Serverless worker
+# Decision 2.0 Serverless — baked Lux, selectable models
 
-This Dockerfile defaults to **Decision-2.0-Vega-27B**, the largest model in the
-[Decision 2.0 collection](https://huggingface.co/collections/vllm-sr/decision-20).
-It bakes both Vega's adapter package and its required Qwen base into the image:
+The image bakes **Decision-2.0-Lux-9B** (~17.95 GB) and defaults to:
 
-| Artifact | Pinned revision | Download size, decimal GB |
-| --- | --- | ---: |
-| [Vega 27B](https://huggingface.co/vllm-sr/Decision-2.0-Vega-27B) | `7aec49ae11a18741706da549ab626b9052795fe7` | 14.983 |
-| [Qwen3.8-27B base](https://huggingface.co/Qwen/Qwen3.8-27B) | `1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0` | 55.586 |
-| **Total model files** | | **70.569 GB / about 65.72 GiB** |
-
-The base is downloaded during the Docker build, alongside its license. The
-worker passes `/opt/models/base` explicitly to Vega's custom loader. Hugging Face
-offline mode and `local_files_only=True` prevent runtime model downloads. Missing
-or inconsistent artifacts fail startup. Do not mount a volume over `/opt/models`.
-
-This is a **queue-based worker** using the model's native `system_one()` API.
-Requests contain `input.state` and `input.questions`; responses contain decisions
-and probabilities. It does not expose a chat-completions API or HTTP port.
-
-## Runpod GitHub integration build test
-
-Use this private repository as the source for a new Serverless endpoint in the
-[Runpod console](https://console.runpod.io/serverless):
-
-1. Allow the Runpod GitHub App to access this private repository if it is not
-   already covered by the installation's permissions.
-2. Import the repository, select **`main`**, and use **`Dockerfile`** at the root.
-   The Docker build context is the repository root. No build argument or Hugging
-   Face token is needed for the default public Vega/base artifacts.
-3. Use the queue worker type and leave the container command override empty.
-   The image entrypoint is `python -u /opt/decision2/handler.py`.
-4. Watch the build logs for both pinned downloads and
-   **`Final model and base checksums verified`**. A successful Docker build alone
-   does not prove that a GPU worker can initialize and answer a job.
-5. For a subsequent worker test, start with minimum **0**, maximum **1** worker,
-   one sufficiently large BF16-capable GPU, and the request in
-   [`examples/request.json`](examples/request.json). See the provisional hardware
-   guidance below before selecting a GPU pool.
-
-The [GitHub integration documentation](https://docs.runpod.io/serverless/workers/github-integration#limitations)
-currently lists an **80 GB image limit**, a **30-minute Docker build limit**, and
-a **160-minute total pipeline limit**. The model files alone take about 70.57 GB.
-The previously measured runtime filesystem adds roughly 8.3 GB, giving an
-**estimated 78.9 GB visible filesystem**. This is close to the limit; the final
-Vega image and Runpod's size accounting have **not** been measured. Download,
-two checksum passes, image assembly and transfer may also hit the time limit.
-Treat this as a build-capacity experiment, not a guaranteed successful import.
-
-The Docker build needs no GPU and never loads model tensors. The managed worker
-test after a build does need a GPU. A private source repository still downloads
-the public pinned models when Runpod builds it. No weights or credentials belong
-in Git. For later updates, Runpod's documented integration watches **GitHub
-releases**; pushing a commit by itself does not roll out an update.
-
-## Build design
-
-- The public, digest-pinned PyTorch runtime provides Torch 2.8.0 and CUDA 12.8.
-  `requirements.resolved.txt` pins the Python dependencies, and `pip check`
-  validates them during the build.
-- A separate model stage downloads regular files directly into
-  `/opt/models/decision2` and `/opt/models/base`, without a second blob-cache copy.
-  The catalog and upstream Vega manifest must agree on the base identity.
-- The bake script checks every manifest-listed model and base SHA-256, rejects
-  missing/unexpected package files, and retains both upstream licenses.
-- The final stage copies `/opt/models` once and verifies both artifact trees
-  again. This deliberately checks the copied filesystem before publication.
-- The small worker source is copied last, allowing dependency and model layers
-  to be reused for source-only changes when the builder retains its cache.
-- `baked-model.json` is generated inside the image and records both revisions,
-  paths and verified-file counts. No model download occurs during Python import.
-
-The model's `trust_remote_code=True` loader is bound to the downloaded immutable
-revision. Its native numerical behavior is preserved; no quantization, dtype
-override, multi-GPU sharding, or monkeypatch of the model code is applied.
-
-## Local build and verification
-
-Run from the repository root with a Linux Docker engine:
-
-```sh
-docker build --platform linux/amd64 -t decision2-vega-serverless:0.1.0 .
+```dotenv
+MODEL_ID=vllm-sr/Decision-2.0-Lux-9B
 ```
 
-Allow substantial build-disk headroom beyond the final image: the download stage,
-final copy, layer export and builder cache can coexist. More than 200 GB of free
-builder disk is a prudent starting allowance, not a measured minimum.
+Use that same value as the **Hub template's `MODEL_ID` environment default**.
+Users can change just `MODEL_ID` to another supported Decision 2.0 model. Lux uses
+its baked copy. Other selections download once into an attached network volume,
+then reuse those files on subsequent worker starts. Only the selected model is
+loaded into memory; the baked Lux files remain in the container image.
 
-Fast packaging and request-contract checks require only Python 3.11 or newer:
+This is a queue-based worker calling the native `system_one()` API. Requests use
+`input.state` and `input.questions`; responses contain decisions, probabilities
+and usage. It is not a chat-completions HTTP server.
 
-```sh
-python -m unittest -v test_baking test_contract
+## Hub and GitHub configuration
+
+- Branch: **`main`**; Dockerfile: **`Dockerfile`**; build context: repository root.
+- Worker type: queue-based Serverless. Leave the command override empty.
+- Hub environment default: **`MODEL_ID=vllm-sr/Decision-2.0-Lux-9B`**.
+- Start with 0 minimum and 1 maximum worker, one GPU per worker.
+- For Lux, the previous image passed GPU inference on an NVIDIA A40 (48 GB VRAM).
+  80 GB container disk and at least 64 GB host RAM are sensible starting values.
+  Larger models need different hardware; see below.
+- Ensure Runpod's GitHub App has access to the private repository when importing.
+  An existing GitHub integration watches releases for updates; a commit push alone
+  does not deploy a new image. [Integration guide](https://docs.runpod.io/serverless/workers/github-integration)
+
+The full Vega Docker build previously exceeded Runpod's 30-minute builder limit.
+This version returns to baking only Lux. Its managed build still needs testing;
+the smaller download does not guarantee completion within that limit.
+
+## Switch to Vega with one environment variable
+
+Attach a network volume with sufficient space, then change:
+
+```dotenv
+MODEL_ID=vllm-sr/Decision-2.0-Vega-27B
 ```
 
-These use tiny fixtures to test both pinned downloads, checksum failures, missing
-base files, identity mismatches, local base-path forwarding, Lux compatibility,
-and input validation. They do **not** exercise real Vega weights or GPU inference.
+No custom model path is required. The worker downloads both Vega's **14.98 GB**
+adapter package and its **55.59 GB** Qwen base at the pinned revisions in
+[`models.json`](models.json). Allow **at least 100 GB of free volume space** for
+Vega as a starting allowance; more is needed when retaining multiple models.
 
-After building, verify real inference on a suitable GPU with model networking
-disabled:
+[Runpod network volumes](https://docs.runpod.io/storage/network-volumes) mount at
+`/runpod-volume` on Serverless. This worker stores models under
+`/runpod-volume/models/<repository-name>/<revision>/`, keeping different model
+versions separate. It records completed downloads under `models/.state/` and
+uses a shared file lock to coordinate first-use downloads across workers. The
+volume must already be attached; the worker does not create cloud storage.
+
+First-use downloads happen **inside the worker**, so that startup time is
+billable. This mode does not use Runpod's platform Model Store. For large models,
+extend the worker initialization window; an initial configuration to test is:
+
+```dotenv
+RUNPOD_INIT_TIMEOUT=3600
+MODEL_DOWNLOAD_TIMEOUT=1800
+```
+
+`MODEL_DOWNLOAD_TIMEOUT` limits each lock wait and the downloader process in
+seconds. The platform's initialization deadline also has to allow model hashing
+and loading. Actual startup time depends on network, volume speed and hardware.
+Subsequent workers reuse completed downloads, including after scale-to-zero.
+
+The downloader runs in a separate process with Hugging Face networking enabled.
+Inference stays in offline mode. Failed downloads fail startup and can resume
+later; the worker never silently substitutes baked Lux for a requested model.
+Selecting Lux again immediately returns to the baked copy.
+
+A single attached volume constrains workers to its data center. Multiple attached
+volumes do not synchronize automatically: each needs its own model files.
+
+## Optional preload and custom layouts
+
+To avoid downloading during GPU worker startup, preload the same volume using a
+CPU-capable environment with this repository's dependencies installed. On a Pod
+where that volume is mounted at `/workspace`, run:
+
+```sh
+python model_storage.py \
+  --model-id vllm-sr/Decision-2.0-Vega-27B \
+  --root /workspace/models
+```
+
+The layout and completion records are reusable when the same volume mounts at
+`/runpod-volume` in Serverless. No GPU is needed for downloading or verification.
+Do not modify a completed model directory while workers are reading it.
+
+For existing downloads stored elsewhere, set explicit paths:
+
+```dotenv
+MODEL_ID=vllm-sr/Decision-2.0-Vega-27B
+MODEL_PATH=/runpod-volume/my-vega
+BASE_MODEL_PATH=/runpod-volume/my-qwen-base
+```
+
+Explicit `MODEL_PATH` means **load pre-existing files**, without automatic
+downloads. Vega also needs its pinned Qwen base at `BASE_MODEL_PATH` (or the
+standard revision directory under `MODEL_ROOT`). Download complete repositories
+as regular files, such as with Hugging Face's `--local-dir` option. Keep the model
+manifest and its referenced files intact. Do not mount over `/opt/decision2` or
+`/opt/models`, which contain the application and baked default.
+
+## Supported models and sizing
+
+Only compatible Decision 2.0 models in the pinned catalog are accepted. Arbitrary
+chat models cannot be substituted into this native decision API.
+
+| `MODEL_ID` | Approximate downloaded files | Placement |
+| --- | ---: | --- |
+| `vllm-sr/Decision-2.0-Kai-0.6B` | 1.52 GB | Volume on first selection |
+| `vllm-sr/Decision-2.0-Eos-0.8B` | 2.04 GB | Volume on first selection |
+| `vllm-sr/Decision-2.0-Sol-2B` | 4.81 GB | Volume on first selection |
+| `vllm-sr/Decision-2.0-Nox-4B` | 9.72 GB | Volume on first selection |
+| `vllm-sr/Decision-2.0-Lux-9B` | 17.95 GB | Baked default |
+| `vllm-sr/Decision-2.0-Vega-27B` | 70.57 GB including base | Volume on first selection |
+
+Storage sizes are decimal GB, not GPU memory requirements. Every revision and
+manifest SHA-256 is pinned in `models.json`. Startup checks the selected manifest,
+code/config hashes and file completeness before loading. The native runtime
+verifies weight hashes and the decision model identity.
+
+Vega's manifest reports 29,365,153,792 loaded parameters. Its loader initially
+materializes FP32 weights on the CPU, about 117.5 GB for parameters alone. Start
+hardware testing with **192 GB or more host RAM** and a **single BF16-capable GPU
+with 80–96 GB VRAM**, preferring 96 GB for headroom. These are provisional targets,
+not verified Vega sizing. Some tensors remain FP32, and longer contexts require
+more memory. This worker does not implement quantization or multi-GPU sharding.
+
+## Environment variables
+
+[`.env.example`](.env.example) lists example values; the worker does not read a
+`.env` file automatically. Set values in Hub/Runpod's environment configuration.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `MODEL_ID` | `vllm-sr/Decision-2.0-Lux-9B` | Model selection at worker startup |
+| `MODEL_ROOT` | `/runpod-volume/models` | Persistent download root |
+| `MODEL_PATH` | Unset | Optional preloaded model directory; disables auto-download |
+| `BASE_MODEL_PATH` | Unset | Optional preloaded base directory for Vega |
+| `MODEL_DOWNLOAD_TIMEOUT` | `1800` | Downloader and lock-wait timeouts in seconds |
+| `DEVICE` | `cuda:0` | `cpu` also supported for local checks with sufficient RAM |
+| `MAX_QUESTIONS` | `8` | Maximum questions per job |
+| `MAX_INPUT_BYTES` | `131072` | Serialized request size bound |
+| `HF_HUB_OFFLINE`, `TRANSFORMERS_OFFLINE` | `1` | Keep enabled in the inference process |
+| `HF_TOKEN` | Unset | Optional HF download authentication; configure as a secret |
+
+Models are initialized once per worker. Changing `MODEL_ID` requires replacement
+workers/restart, not a per-request parameter. The shipped public models need no
+HF token. CUDA inference needs driver support compatible with CUDA 12.8.
+
+## Build and tests
+
+```sh
+docker build --platform linux/amd64 -t decision2-lux-serverless:0.3.0 .
+python -m unittest -v test_baking test_contract test_model_selection test_model_storage
+```
+
+The public PyTorch base is pinned by digest and dependencies by version. Build
+stages verify the complete downloaded model package and the copied final image
+filesystem. The build loads no tensors and needs no GPU. The build argument
+`MODEL_ID` can change the baked model, but runtime selection normally avoids that.
+
+After building, exercise real baked Lux inference on a suitable GPU:
 
 ```sh
 docker run --rm --gpus all --network none --entrypoint python \
-  decision2-vega-serverless:0.1.0 /opt/decision2/smoke_test.py
+  decision2-lux-serverless:0.3.0 /opt/decision2/smoke_test.py
 ```
-
-The smoke test requires a sensible return-routing decision, normalized finite
-probabilities, repeated valid requests and recovery after an invalid native
-question. `--network none` is for this local smoke test; a deployed queue worker
-needs network access to the Runpod API.
-
-To build the previously exercised smaller Lux model instead:
-
-```sh
-docker build --platform linux/amd64 \
-  --build-arg MODEL_ID=vllm-sr/Decision-2.0-Lux-9B \
-  -t decision2-lux-serverless:local .
-```
-
-Changing `MODEL_ID` at runtime cannot switch baked weights. Rebuild for a different
-model. `models.json` records collection sizes and immutable revisions; this
-packaging route accepts the `qwen-full` and `qwen-adapter` manifest profiles.
-
-## GPU worker configuration
-
-**Vega hardware sizing is provisional until tested.** Its manifest reports
-29,365,153,792 loaded parameters. The native loader materializes FP32 weights on
-the CPU before converting eligible GPU linear weights to BF16. FP32 parameters
-alone account for about 117.5 GB of host memory; additional loading buffers need
-headroom. A host with **192 GB RAM or more** is a conservative starting target,
-not a verified requirement or a guarantee provided by a GPU pool selection.
-
-Use a **single GPU with at least 80 GB VRAM**, preferably 96 GB for initial tests,
-and CUDA driver support for CUDA 12.8. Confirm the chosen worker's actual host
-RAM. Some tensors stay FP32; long contexts, question count and graph buffers
-increase memory demand. No 80 GB or 96 GB Vega inference run has been verified.
-The custom loader uses one device and does not split across multiple GPUs.
-
-Suggested initial settings, to validate on deployment:
-
-| Setting | Starting value |
-| --- | --- |
-| Worker type | Queue-based Serverless |
-| GPU count | 1 |
-| Container disk | 120 GB, then check actual use |
-| Minimum / maximum workers | 0 / 1 |
-| Concurrency | 1 job per worker |
-| Idle timeout | 5 seconds; increase to keep a worker warm |
-| Execution timeout | 120 seconds; larger jobs need benchmarking |
-| Environment | Defaults below; no HF token needed |
-| Ports / network volume | None required |
-
-Baking avoids the Hugging Face download during startup. An uncached host still
-pulls the large image, and each worker verifies and loads the tensors. Cold-start
-latency for Vega has not been measured.
-
-## Requests and runtime settings
 
 [`examples/request.json`](examples/request.json) exercises `choice`, `noul`
-(yes/no probability), and `score`. Send that JSON to
-`https://api.runpod.ai/v2/YOUR_ENDPOINT_ID/run`, authenticate with your Runpod key,
-and poll the returned job ID at `/status/JOB_ID`. Use asynchronous submission for
-cold workers so a client wait timeout does not trigger duplicate jobs.
-
-For an endpoint you have deliberately deployed, set `RUNPOD_API_KEY` and
-`RUNPOD_ENDPOINT_ID` in your environment, then run:
-
-```sh
-python check_endpoint.py
-```
-
-This submits real, potentially billable jobs: valid inference, an invalid request
-that should return `FAILED`, then another valid request.
-
-| Environment variable | Default | Purpose |
-| --- | --- | --- |
-| `DEVICE` | `cuda:0` | `cpu` is available for debugging with sufficient RAM |
-| `MAX_QUESTIONS` | `8` | Maximum questions per job |
-| `MAX_INPUT_BYTES` | `131072` | Serialized JSON input bound |
-| `HF_HUB_OFFLINE` / `TRANSFORMERS_OFFLINE` | `1` | Keep enabled for baked deployment |
-| `MODEL_ID` | Unset | Optional consistency check; must match the baked model |
-
-The native runtime enforces criteria and token limits. Vega supports up to 32,768
-input tokens subject to its native budgeting. Per-question errors are surfaced
-as failed jobs rather than partial successes.
+(yes/no probability), and `score`. The smoke test checks expected decisions,
+finite normalized probabilities, repeat requests and native invalid-job recovery.
+For an intentionally deployed endpoint, set `RUNPOD_API_KEY` and
+`RUNPOD_ENDPOINT_ID`, then run `python check_endpoint.py` to submit real jobs.
 
 ## Verification status
 
-- The earlier Lux 9B image passed offline inference and real Runpod A40 endpoint
-  tests. That result validates the existing worker path, not Vega's capacity.
-- Vega's pinned base requirements were checked against its manifest and loader.
-  All 28 required base filenames exist at the pinned Qwen revision.
-- All **18 fixture-based packaging, runtime handoff and request-contract tests**
-  passed on Windows and in the existing Linux Python 3.11 runtime with networking
-  disabled. Docker's `build --check` completed without warnings. These checks do
-  not download or load the 70.57 GB artifacts.
-- The complete Vega image, managed GitHub build, and real Vega GPU inference are
-  **unverified** until the build experiment and worker smoke test complete.
+- **Passed:** 34 packaging, model selection, storage lifecycle and request-contract
+  tests on Windows and in the Linux runtime; Dockerfile build validation.
+- **Passed with real weights:** Kai 0.6B first-use download and CPU inference using
+  the updated source in the existing Linux runtime; a fresh container then passed
+  the same smoke test with networking disabled and the volume mounted read-only.
+  Valid decisions, repeat requests and invalid-job recovery passed in both runs.
+- **Passed:** selection of the actual baked Lux files and their pinned local-path
+  override. No new full Docker image was built during these source checks.
+- **Previously passed:** baked Lux GPU inference on real Runpod NVIDIA A40 workers.
+- **Pending:** this revision's managed GitHub build, Vega download/inference on a
+  real network volume, and GPU tests of the updated worker.
 
-Local deployment records, logs, research files, credentials and model weights are
-excluded from this source repository. Both upstream model repositories identify
-their licenses as Apache 2.0; their license files are retained in the image.
+Local deployment records, logs, test downloads and credentials are excluded from
+Git and the Docker build context. Upstream model licenses are retained alongside
+both baked and downloaded weights.

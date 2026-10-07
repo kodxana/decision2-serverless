@@ -7,7 +7,7 @@ from pathlib import Path, PurePosixPath
 import re
 
 CATALOG_PATH = Path(__file__).with_name("models.json")
-DEFAULT_MODEL = "vllm-sr/Decision-2.0-Vega-27B"
+DEFAULT_MODEL = "vllm-sr/Decision-2.0-Lux-9B"
 
 
 def validate_file_map(expected):

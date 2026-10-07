@@ -3,6 +3,7 @@
 !requirements.resolved.txt
 !constraints.txt
 !app.py
+!model_storage.py
 !handler.py
 !models.json
 !bake_model.py
