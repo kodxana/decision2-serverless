@@ -6,7 +6,7 @@ import logging
 import os
 from pathlib import Path
 
-from bake_model import base_spec, validate_file_map
+from bake_model import BAKED_MODELS, DEFAULT_MODEL, base_spec, validate_file_map
 from model_storage import cached_snapshot, ensure_stored_model, storage_paths
 
 LOGGER = logging.getLogger(__name__)
@@ -21,10 +21,12 @@ def baked_model_info(metadata_path=None, model_id=None):
     metadata = json.loads(path.read_text(encoding="utf-8"))
     collection = "models" in metadata
     if collection:
-        if (not isinstance(metadata["models"], dict) or set(metadata["models"]) != set(CATALOG)
-                or metadata.get("default_model") not in CATALOG):
-            raise RuntimeError("Baked model collection differs from models.json; rebuild the image")
+        if (not isinstance(metadata["models"], dict) or set(metadata["models"]) != set(BAKED_MODELS)
+                or metadata.get("default_model") != DEFAULT_MODEL):
+            raise RuntimeError("Baked model collection differs from the Lux/Vega bundle; rebuild the image")
         selected = model_id or metadata["default_model"]
+        if selected not in metadata["models"]:
+            return None
         info = metadata["models"][selected]
         if info.get("model_id") != selected:
             raise RuntimeError("Baked model identity differs from its collection")

@@ -1,4 +1,4 @@
-"""Verify all-model packaging and runtime selection without downloading weights."""
+"""Verify Lux/Vega packaging and external model selection without downloads."""
 
 import hashlib
 import json
@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from app import CATALOG, selected_model_info
-from bake_model import DEFAULT_MODEL, bake_all, verify_baked_model
+from bake_model import BAKED_MODELS, DEFAULT_MODEL, bake_bundled, verify_baked_model
 
 VEGA = "vllm-sr/Decision-2.0-Vega-27B"
 
@@ -61,7 +61,7 @@ class ModelCollectionTests(unittest.TestCase):
         self.write_files(Path(local_dir), self.packages[repo_id])
 
     def bake(self):
-        return bake_all(self.models, self.metadata, download=self.download)
+        return bake_bundled(self.models, self.metadata, download=self.download)
 
     def select(self, model_id=None, **env):
         if model_id is not None:
@@ -69,11 +69,12 @@ class ModelCollectionTests(unittest.TestCase):
         with patch.dict(os.environ, env):
             return selected_model_info(self.metadata)
 
-    def test_bakes_exactly_six_pinned_packages_and_no_qwen_base(self):
+    def test_bakes_only_lux_and_vega_and_no_qwen_base(self):
         info = self.bake()
-        self.assertEqual(len(info["models"]), 6)
-        self.assertEqual({call.kwargs["repo_id"] for call in self.download.call_args_list}, set(self.catalog))
-        self.assertEqual(self.download.call_count, 6)
+        expected = {"vllm-sr/Decision-2.0-Lux-9B", "vllm-sr/Decision-2.0-Vega-27B"}
+        self.assertEqual(set(info["models"]), expected)
+        self.assertEqual({call.kwargs["repo_id"] for call in self.download.call_args_list}, expected)
+        self.assertEqual(self.download.call_count, 2)
         self.assertEqual(info["default_model"], DEFAULT_MODEL)
         self.assertEqual(info["models"][VEGA]["base"], {
             "model_id": self.catalog[VEGA]["base_model"],
@@ -81,19 +82,40 @@ class ModelCollectionTests(unittest.TestCase):
         self.assertFalse((self.models / ".unused-base").exists())
         self.assertEqual(verify_baked_model(self.metadata), info)
 
-    def test_every_self_contained_model_selects_baked_files_without_storage(self):
+    def test_lux_selects_baked_files_without_storage(self):
         info = self.bake()
         self.assertEqual(self.select()["model_id"], DEFAULT_MODEL)
         with patch("app.cached_snapshot") as cache, patch("app.ensure_stored_model") as download:
-            for model_id, entry in self.catalog.items():
-                if entry.get("base_model"):
-                    continue
-                with self.subTest(model=model_id):
-                    selected = self.select(model_id)
-                    self.assertEqual(selected["source"], "baked")
-                    self.assertEqual(selected["path"], info["models"][model_id]["path"])
+            selected = self.select(DEFAULT_MODEL)
+            self.assertEqual(selected["source"], "baked")
+            self.assertEqual(selected["path"], info["models"][DEFAULT_MODEL]["path"])
             cache.assert_not_called()
             download.assert_not_called()
+
+    def test_smaller_models_load_from_cache_when_not_baked(self):
+        self.bake()
+        with patch("app.ensure_stored_model") as download:
+            for model_id in set(self.catalog) - set(BAKED_MODELS):
+                with self.subTest(model=model_id):
+                    model = (self.root / "cache" / ("models--" + model_id.replace("/", "--"))
+                             / "snapshots" / self.catalog[model_id]["revision"])
+                    self.write_files(model, self.packages[model_id])
+                    selected = self.select(model_id)
+                    self.assertEqual(selected["path"], str(model))
+                    self.assertEqual(selected["source"], "model-store")
+        download.assert_not_called()
+
+    def test_uncached_smaller_model_downloads_to_storage(self):
+        self.bake()
+        model_id = "vllm-sr/Decision-2.0-Kai-0.6B"
+        model = self.root / "storage" / "kai"
+        self.write_files(model, self.packages[model_id])
+        with patch("app.ensure_stored_model", return_value=(model, None)) as download:
+            selected = self.select(model_id, MODEL_ROOT=str(self.root / "storage"))
+        self.assertEqual(download.call_args.args[1], model_id)
+        self.assertEqual(download.call_args.kwargs, {"model_path": None, "base_path": None})
+        self.assertEqual(selected["source"], "storage")
+        self.assertEqual(selected["path"], str(model))
 
     def test_vega_uses_baked_adapter_and_cached_qwen_without_downloading(self):
         info = self.bake()
@@ -137,7 +159,7 @@ class ModelCollectionTests(unittest.TestCase):
 
     def test_missing_baked_package_never_downloads_a_replacement(self):
         info = self.bake()
-        model_id = "vllm-sr/Decision-2.0-Kai-0.6B"
+        model_id = DEFAULT_MODEL
         (Path(info["models"][model_id]["path"]) / "MODEL_MANIFEST.json").unlink()
         with patch("app.ensure_stored_model") as download:
             with self.assertRaisesRegex(RuntimeError, "Baked model files are missing"):

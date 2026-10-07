@@ -1,4 +1,4 @@
-"""Bake pinned Decision packages; the all-model image leaves Qwen external."""
+"""Bake pinned Lux and Vega packages while keeping Vega's Qwen base external."""
 
 import argparse
 import hashlib
@@ -8,6 +8,7 @@ import re
 
 CATALOG_PATH = Path(__file__).with_name("models.json")
 DEFAULT_MODEL = "vllm-sr/Decision-2.0-Lux-9B"
+BAKED_MODELS = (DEFAULT_MODEL, "vllm-sr/Decision-2.0-Vega-27B")
 
 
 def validate_file_map(expected):
@@ -115,8 +116,8 @@ def verify_baked_model(metadata_path):
     if "models" not in metadata:
         return verify_baked_entry(metadata, catalog)
     if (metadata.get("default_model") != DEFAULT_MODEL
-            or set(metadata["models"]) != set(catalog)):
-        raise ValueError("Baked model collection differs from models.json")
+            or set(metadata["models"]) != set(BAKED_MODELS)):
+        raise ValueError("Baked model collection differs from the Lux/Vega bundle")
     for model_id, info in metadata["models"].items():
         if info.get("model_id") != model_id:
             raise ValueError("Baked model collection identity mismatch")
@@ -188,12 +189,11 @@ def bake(model_id, destination, base_destination, metadata_path, *, download,
     return metadata
 
 
-def bake_all(destination, metadata_path, *, download):
-    """Include every Decision package, with no download of Vega's Qwen base."""
-    catalog = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
+def bake_bundled(destination, metadata_path, *, download):
+    """Include only Lux and Vega, with no download of Vega's Qwen base."""
     root = Path(destination)
     models = {}
-    for model_id in catalog:
+    for model_id in BAKED_MODELS:
         models[model_id] = bake(
             model_id, root / model_id.split("/")[-1], root / ".unused-base", None,
             download=download, skip_base=True,
@@ -212,15 +212,15 @@ def main():
     parser.add_argument("--verify-only", action="store_true")
     parser.add_argument("--existing-model", type=Path)
     parser.add_argument("--existing-base", type=Path)
-    parser.add_argument("--all", action="store_true", help="Bake all Decision packages without external bases")
+    parser.add_argument("--bundled", action="store_true", help="Bake Lux and Vega without the external Qwen base")
     args = parser.parse_args()
     if args.verify_only:
         print(json.dumps(verify_baked_model(args.metadata)), flush=True)
         print("All baked files verified; external base weights are supplied at runtime", flush=True)
-    elif args.all:
+    elif args.bundled:
         from huggingface_hub import snapshot_download
 
-        bake_all(args.destination, args.metadata, download=snapshot_download)
+        bake_bundled(args.destination, args.metadata, download=snapshot_download)
     else:
         from huggingface_hub import snapshot_download
 

@@ -3,9 +3,9 @@
 Run classification, yes/no probability scoring, and ordinal scoring with
 [Decision 2.0](https://huggingface.co/collections/vllm-sr/decision-20).
 
-**All six Decision packages are included in the image. Lux 9B is selected by
-default.** Change `MODEL_ID` to switch models. Only Vega needs an additional
-Qwen base model from Runpod Model Store or network storage.
+**Lux 9B and the Vega 27B adapter are included in the image. Lux 9B is selected
+by default.** Vega needs an additional Qwen base model. Smaller Decision models
+can be loaded from Runpod Model Store or network storage.
 
 ## Quick start
 
@@ -22,10 +22,10 @@ Qwen base model from Runpod Model Store or network storage.
    | --- | --- |
    | GPU | One BF16-capable GPU with 48 GB VRAM |
    | Host RAM | 64 GB or more recommended |
-   | Container disk | 100 GB recommended |
+   | Container disk | 80 GB recommended |
    | Minimum / maximum workers | `0` / `1` |
    | Container command | Leave unset |
-   | Network volume | Not required for Kai, Eos, Sol, Nox, or Lux |
+   | Network volume | Not required for Lux |
 
 4. Send a request using the [API example](#send-a-request) below.
 
@@ -35,21 +35,27 @@ Change `MODEL_ID` in the endpoint's environment variables and restart the
 workers. For example:
 
 ```dotenv
-MODEL_ID=vllm-sr/Decision-2.0-Nox-4B
+MODEL_ID=vllm-sr/Decision-2.0-Vega-27B
 ```
 
-| `MODEL_ID` | Included in the image |
-| --- | ---: |
-| `vllm-sr/Decision-2.0-Kai-0.6B` | 1.52 GB |
-| `vllm-sr/Decision-2.0-Eos-0.8B` | 2.04 GB |
-| `vllm-sr/Decision-2.0-Sol-2B` | 4.81 GB |
-| `vllm-sr/Decision-2.0-Nox-4B` | 9.72 GB |
-| `vllm-sr/Decision-2.0-Lux-9B` | 17.95 GB |
-| `vllm-sr/Decision-2.0-Vega-27B` | 14.98 GB; requires the separate Qwen base below |
+| `MODEL_ID` | Package size | Location |
+| --- | ---: | --- |
+| `vllm-sr/Decision-2.0-Kai-0.6B` | 1.52 GB | Model Store or network volume |
+| `vllm-sr/Decision-2.0-Eos-0.8B` | 2.04 GB | Model Store or network volume |
+| `vllm-sr/Decision-2.0-Sol-2B` | 4.81 GB | Model Store or network volume |
+| `vllm-sr/Decision-2.0-Nox-4B` | 9.72 GB | Model Store or network volume |
+| `vllm-sr/Decision-2.0-Lux-9B` | 17.95 GB | Included |
+| `vllm-sr/Decision-2.0-Vega-27B` | 14.98 GB | Adapter included; Qwen base required below |
 
-The image contains approximately **51.02 GB of model files**, plus runtime
+The image contains approximately **32.93 GB of model files**, plus runtime
 dependencies. These are storage sizes, not GPU memory requirements. One selected
 model is loaded per worker.
+
+For Kai, Eos, Sol, or Nox, set the endpoint's **Model** field to the matching
+Hugging Face repository at its pinned revision in [`models.json`](models.json).
+Alternatively, attach a network volume with enough free space; the selected
+model downloads to `/runpod-volume/models` on first use and is reused later.
+These four models do not need a separate Qwen base.
 
 ## Using Vega 27B
 
@@ -100,8 +106,8 @@ Set these in the endpoint's environment configuration only when needed:
 
 | Variable | Purpose |
 | --- | --- |
-| `MODEL_ROOT` | Qwen download location; defaults to `/runpod-volume/models` |
-| `MODEL_PATH` | Override the included Decision package with an existing directory |
+| `MODEL_ROOT` | Model/base download location; defaults to `/runpod-volume/models` |
+| `MODEL_PATH` | Load an existing Decision package directory |
 | `BASE_MODEL_PATH` | Existing Qwen base directory for Vega |
 | `MODEL_DOWNLOAD_TIMEOUT` | Download timeout in seconds; defaults to `1800` |
 | `RUNPOD_INIT_TIMEOUT` | Maximum worker initialization time allowed by Runpod |
