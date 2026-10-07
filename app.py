@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 
 from bake_model import base_spec, validate_file_map
-from model_storage import ensure_stored_model, storage_paths
+from model_storage import cached_snapshot, ensure_stored_model, storage_paths
 
 LOGGER = logging.getLogger(__name__)
 CATALOG = json.loads(Path(__file__).with_name("models.json").read_text(encoding="utf-8"))
@@ -67,7 +67,7 @@ def check_stored_files(root, files):
 
 
 def selected_model_info(metadata_path=None):
-    """Use baked weights when selected; otherwise prepare/reuse persistent storage."""
+    """Select baked weights, explicit paths, or pinned cache/storage snapshots."""
     baked = baked_model_info(metadata_path)
     model_id = os.getenv("MODEL_ID", baked["model_id"])
     if model_id not in CATALOG:
@@ -81,13 +81,32 @@ def selected_model_info(metadata_path=None):
         return {**baked, "source": "baked"}
 
     root = Path(os.getenv("MODEL_ROOT", "/runpod-volume/models"))
-    stored_base = None
+    base_path = None
+    if base_override is not None:
+        base_path = local_model_path(base_override, "BASE_MODEL_PATH")
+    elif entry.get("base_model"):
+        if model_id == baked["model_id"] and baked.get("base"):
+            base_path = Path(baked["base"]["path"])
+        else:
+            base_path = cached_snapshot(entry["base_model"], entry["base_revision"])
+
+    source = "storage"
     if override is not None:
         model_path = local_model_path(override, "MODEL_PATH")
     elif model_id == baked["model_id"]:
         model_path = local_model_path(baked["path"], "MODEL_PATH")
+        source = "baked"
     else:
-        model_path, stored_base = ensure_stored_model(root, model_id, entry)
+        model_path = cached_snapshot(model_id, entry["revision"])
+        if model_path is not None:
+            source = "model-store"
+        if model_path is None or (entry.get("base_model") and base_path is None):
+            # Download only the missing component; mounted cache files stay untouched.
+            model_path, stored_base = ensure_stored_model(
+                root, model_id, entry, model_path=model_path, base_path=base_path,
+            )
+            if entry.get("base_model"):
+                base_path = stored_base
     manifest_path = model_path / "MODEL_MANIFEST.json"
     if not manifest_path.is_file():
         raise RuntimeError(f"Model manifest is missing: {manifest_path}")
@@ -100,13 +119,10 @@ def selected_model_info(metadata_path=None):
     base = base_spec(manifest, entry)
     check_stored_files(model_path, manifest["files_sha256"])
     info = {"model_id": model_id, "revision": entry["revision"],
-            "path": str(model_path), "source": "storage"}
+            "path": str(model_path), "source": source}
     if base:
-        default_base = baked.get("base", {}).get("path") if model_id == baked["model_id"] else None
-        if not default_base:
-            default_base = stored_base or storage_paths(root, model_id, entry)[1]
         base_path = local_model_path(
-            base_override if base_override is not None else str(default_base),
+            str(base_path if base_path is not None else storage_paths(root, model_id, entry)[1]),
             "BASE_MODEL_PATH",
         )
         check_stored_files(base_path, base["files_sha256"])

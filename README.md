@@ -4,8 +4,7 @@ Run classification, yes/no probability scoring, and ordinal scoring with
 [Decision 2.0](https://huggingface.co/collections/vllm-sr/decision-20).
 
 **Lux 9B is included in the image and selected by default.** Change `MODEL_ID` to
-use another supported model. It downloads to your network volume on first use
-and is reused on subsequent starts.
+use another supported model from Runpod Model Store or your network volume.
 
 ## Quick start
 
@@ -31,8 +30,8 @@ and is reused on subsequent starts.
 
 ## Choose a model
 
-To switch models, attach a network volume, change `MODEL_ID` in the endpoint's
-environment variables, and restart the workers. For example:
+To switch models, change `MODEL_ID` in the endpoint's environment variables,
+configure storage below, and restart the workers. For example:
 
 ```dotenv
 MODEL_ID=vllm-sr/Decision-2.0-Vega-27B
@@ -49,6 +48,21 @@ MODEL_ID=vllm-sr/Decision-2.0-Vega-27B
 
 Download sizes are storage requirements, not GPU memory requirements.
 
+### Runpod Model Store
+
+Set the endpoint's **Model** field to the selected Hugging Face repository and
+use its pinned revision from [`models.json`](models.json). The worker detects
+the cached snapshot automatically and loads it offline. Changing `MODEL_ID`
+alone does not configure Runpod's cache. Lux uses its baked copy by default.
+
+[Runpod supports one cached repository per endpoint.](https://docs.runpod.io/serverless/endpoints/model-caching)
+Vega needs both its own repository and `Qwen/Qwen3.8-27B`. You can cache either;
+the missing component downloads to writable `MODEL_ROOT` storage, or you can
+provide it with `MODEL_PATH` / `BASE_MODEL_PATH`.
+
+### Network volume
+
+Attach a network volume to download and persist models that are not cached.
 Models are stored under `/runpod-volume/models`. Attach enough storage for all
 models you intend to keep. Vega's base model downloads automatically; allow at
 least **100 GB of free volume space** for Vega.
@@ -56,7 +70,7 @@ least **100 GB of free volume space** for Vega.
 For Vega, a single **80–96 GB GPU** and **192 GB or more host RAM** are provisional
 starting targets; Vega GPU inference has not yet been validated.
 
-The first download can take several minutes and consumes billable worker time.
+Downloads performed by the worker consume billable worker time.
 For larger models, allow a longer startup window:
 
 ```dotenv
@@ -75,7 +89,7 @@ Set these in the endpoint's environment configuration only when needed:
 | --- | --- |
 | `MODEL_ROOT` | Download location; defaults to `/runpod-volume/models` |
 | `MODEL_PATH` | Load an existing model directory instead of downloading |
-| `BASE_MODEL_PATH` | Existing Qwen base directory when using a custom Vega path |
+| `BASE_MODEL_PATH` | Existing Qwen base directory for Vega |
 | `MODEL_DOWNLOAD_TIMEOUT` | Download timeout in seconds; defaults to `1800` |
 | `RUNPOD_INIT_TIMEOUT` | Maximum worker initialization time allowed by Runpod |
 | `HF_TOKEN` | Optional Hugging Face token for authenticated downloads |

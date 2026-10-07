@@ -14,6 +14,7 @@ from bake_model import DEFAULT_MODEL
 from model_storage import storage_paths
 
 VEGA = "vllm-sr/Decision-2.0-Vega-27B"
+KAI = "vllm-sr/Decision-2.0-Kai-0.6B"
 
 
 class ModelSelectionTests(unittest.TestCase):
@@ -32,6 +33,11 @@ class ModelSelectionTests(unittest.TestCase):
         patch.dict(os.environ, {}, clear=True).start()
         self.catalog = {key: dict(value) for key, value in CATALOG.items()}
         patch("app.CATALOG", self.catalog).start()
+        self.cache = self.root / "huggingface-cache" / "hub"
+        patch("model_storage.RUNPOD_CACHE_ROOT", self.cache).start()
+
+    def snapshot(self, model_id, revision):
+        return self.cache / ("models--" + model_id.replace("/", "--")) / "snapshots" / revision
 
     def write_files(self, directory, files):
         directory.mkdir(parents=True, exist_ok=True)
@@ -151,6 +157,76 @@ class ModelSelectionTests(unittest.TestCase):
         self.assertEqual(loader.from_pretrained.call_args.args, (str(model),))
         self.assertEqual(loader.from_pretrained.call_args.kwargs["base_path"], str(base))
         self.assertTrue(loader.from_pretrained.call_args.kwargs["local_files_only"])
+
+    def test_model_store_uses_pinned_snapshot_without_downloader_or_storage(self):
+        model = self.snapshot(KAI, self.catalog[KAI]["revision"])
+        self.prepare(KAI, model)
+        # A conflicting main reference must not change the selected commit.
+        refs = model.parent.parent / "refs"
+        refs.mkdir()
+        (refs / "main").write_text("0" * 40)
+        with patch("app.ensure_stored_model") as download:
+            info = self.select(MODEL_ID=KAI, MODEL_ROOT=str(self.root / "absent" / "models"))
+        download.assert_not_called()
+        self.assertEqual(info["path"], str(model))
+        self.assertEqual(info["source"], "model-store")
+
+    def test_model_store_wrong_revision_fails_without_download(self):
+        self.snapshot(KAI, "0" * 40).mkdir(parents=True)
+        with patch("app.ensure_stored_model") as download:
+            with self.assertRaisesRegex(RuntimeError, "no pinned snapshot"):
+                self.select(MODEL_ID=KAI)
+        download.assert_not_called()
+
+    def test_explicit_path_takes_priority_over_wrong_cached_revision(self):
+        self.snapshot(KAI, "0" * 40).mkdir(parents=True)
+        model, _ = self.prepare(KAI)
+        info = self.select(MODEL_ID=KAI, MODEL_PATH=str(model))
+        self.assertEqual(info["path"], str(model))
+
+    def test_incomplete_cached_snapshot_fails_without_redownload(self):
+        model = self.snapshot(KAI, self.catalog[KAI]["revision"])
+        self.prepare(KAI, model)
+        (model / "weights.bin").unlink()
+        with patch("app.ensure_stored_model") as download:
+            with self.assertRaisesRegex(RuntimeError, "Model file is missing"):
+                self.select(MODEL_ID=KAI)
+        download.assert_not_called()
+
+    def test_vega_and_base_cached_snapshots_load_without_writable_storage(self):
+        entry = self.catalog[VEGA]
+        model = self.snapshot(VEGA, entry["revision"])
+        base = self.snapshot(entry["base_model"], entry["base_revision"])
+        self.prepare(VEGA, model, base)
+        with patch("app.ensure_stored_model") as download:
+            info = self.select(MODEL_ID=VEGA)
+        download.assert_not_called()
+        self.assertEqual(info["base"]["path"], str(base))
+
+    def test_vega_cache_reuses_preloaded_base(self):
+        model = self.snapshot(VEGA, self.catalog[VEGA]["revision"])
+        _, base = self.prepare(VEGA, model)
+        info = self.select(MODEL_ID=VEGA, MODEL_ROOT=str(self.storage))
+        self.assertEqual(info["path"], str(model))
+        self.assertEqual(info["base"]["path"], str(base))
+
+    def test_cached_base_reuses_preloaded_vega(self):
+        entry = self.catalog[VEGA]
+        base = self.snapshot(entry["base_model"], entry["base_revision"])
+        model, _ = self.prepare(VEGA, base_path=base)
+        info = self.select(MODEL_ID=VEGA, MODEL_ROOT=str(self.storage))
+        self.assertEqual(info["path"], str(model))
+        self.assertEqual(info["base"]["path"], str(base))
+
+    def test_explicit_base_avoids_base_download_when_model_is_missing(self):
+        model, base = self.prepare(VEGA, base_path=self.root / "custom-base")
+        with patch("app.ensure_stored_model", return_value=(model, base)) as download:
+            self.select(MODEL_ID=VEGA, BASE_MODEL_PATH=str(base), MODEL_ROOT=str(self.storage))
+        self.assertEqual(download.call_args.kwargs["base_path"], base)
+
+    def test_baked_lux_stays_default_even_when_cached(self):
+        self.snapshot(DEFAULT_MODEL, "0" * 40).mkdir(parents=True)
+        self.assertEqual(self.select()["source"], "baked")
 
 
 if __name__ == "__main__":

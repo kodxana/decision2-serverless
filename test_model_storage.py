@@ -80,6 +80,23 @@ class ModelStorageTests(unittest.TestCase):
             self.ensure()
         download.assert_not_called()
 
+    def test_cached_component_is_passed_to_child_and_reused_after_preparation(self):
+        for component in ("model", "base"):
+            with self.subTest(component=component), tempfile.TemporaryDirectory() as directory:
+                self.root = Path(directory) / "models"
+                paths = storage_paths(self.root, self.model_id, self.entry)
+                cached = Path(directory) / "cached-snapshot"
+                def finish(*args, **kwargs):
+                    self.finish_download()
+                    paths[0 if component == "model" else 1].rename(cached)
+                reuse = {component + "_path": cached}
+                with patch("model_storage.subprocess.run", side_effect=finish) as download:
+                    result = ensure_stored_model(self.root, self.model_id, self.entry, **reuse)
+                    self.assertEqual(result[0 if component == "model" else 1], cached)
+                    self.assertEqual(ensure_stored_model(self.root, self.model_id, self.entry, **reuse), result)
+                download.assert_called_once()
+                self.assertIn("--existing-" + component, download.call_args.args[0])
+
 
 if __name__ == "__main__":
     unittest.main()

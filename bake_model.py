@@ -24,18 +24,24 @@ def validate_file_map(expected):
             raise ValueError(f"Invalid model checksum: {name}")
 
 
-def verify_tree(root, expected, extra_files=()):
-    """Hash regular files, reject traversal/symlinks and unexpected inventory."""
+def verify_hashes(root, expected, *, allow_symlinks=False):
+    """Verify pinned content; HF snapshots may link to their repository's blobs."""
     root = Path(root)
     validate_file_map(expected)
     for name, digest in expected.items():
         path = root / name
-        if path.is_symlink() or any(p.is_symlink() for p in path.parents):
+        if not allow_symlinks and (path.is_symlink() or any(p.is_symlink() for p in path.parents)):
             raise ValueError(f"Model file must not be a symlink: {name}")
         with path.open("rb") as stream:
             actual = hashlib.file_digest(stream, "sha256").hexdigest()
         if actual != digest:
             raise ValueError(f"Model checksum mismatch: {name}")
+
+
+def verify_tree(root, expected, extra_files=()):
+    """Hash regular files, reject traversal/symlinks and unexpected inventory."""
+    root = Path(root)
+    verify_hashes(root, expected)
     actual_files = set()
     for path in root.rglob("*"):
         name = path.relative_to(root).as_posix()
@@ -96,25 +102,32 @@ def verify_baked_model(metadata_path):
     return metadata
 
 
-def bake(model_id, destination, base_destination, metadata_path, *, download):
+def bake(model_id, destination, base_destination, metadata_path, *, download,
+         existing_model=None, existing_base=None):
     catalog = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
     if model_id not in catalog:
         raise ValueError("Select a model from models.json")
-    destination, base_destination = Path(destination).resolve(), Path(base_destination).resolve()
+    destination = Path(existing_model if existing_model is not None else destination).resolve()
+    base_destination = Path(existing_base if existing_base is not None else base_destination).resolve()
     if destination.is_relative_to(base_destination) or base_destination.is_relative_to(destination):
         raise ValueError("Model and base destinations must be separate directories")
     entry = catalog[model_id]
     revision = entry["revision"]
     print(f"Baking {model_id}@{revision} into {destination}", flush=True)
-    download(
-        repo_id=model_id,
-        revision=revision,
-        local_dir=destination,
-    )
-    manifest = verify_files(destination)
+    if existing_model is None:
+        download(repo_id=model_id, revision=revision, local_dir=destination)
+        manifest = verify_files(destination)
+    else:
+        raw = (destination / "MODEL_MANIFEST.json").read_bytes()
+        if hashlib.sha256(raw).hexdigest() != entry["manifest_sha256"]:
+            raise ValueError("Existing model manifest differs from the pinned revision")
+        manifest = json.loads(raw)
+        verify_hashes(destination, manifest["files_sha256"], allow_symlinks=True)
     if manifest["model_name"] != model_id.split("/")[-1]:
         raise ValueError("Downloaded manifest names a different model")
     base = base_spec(manifest, entry)
+    if existing_base is not None and base is None:
+        raise ValueError("This model does not use an external base")
     metadata = {
         "model_id": model_id,
         "revision": revision,
@@ -123,14 +136,18 @@ def bake(model_id, destination, base_destination, metadata_path, *, download):
     }
     if base:
         print(f"Baking base {base['repo_id']}@{base['revision']} into {base_destination}", flush=True)
-        download(
-            repo_id=base["repo_id"],
-            revision=base["revision"],
-            local_dir=base_destination,
-            allow_patterns=sorted(set(base["files_sha256"]) | {"LICENSE"}),
-        )
-        # Keep the upstream license alongside the pinned base weights.
-        verify_tree(base_destination, base["files_sha256"], {"LICENSE"})
+        if existing_base is None:
+            download(
+                repo_id=base["repo_id"],
+                revision=base["revision"],
+                local_dir=base_destination,
+                allow_patterns=sorted(set(base["files_sha256"]) | {"LICENSE"}),
+            )
+            # Keep the upstream license alongside the pinned base weights.
+            verify_tree(base_destination, base["files_sha256"], {"LICENSE"})
+        else:
+            # Model Store holds the full upstream repo, including unrelated files.
+            verify_hashes(base_destination, base["files_sha256"], allow_symlinks=True)
         metadata["base"] = {
             "model_id": base["repo_id"], "revision": base["revision"],
             "path": str(base_destination), "files_verified": len(base["files_sha256"]),
@@ -149,6 +166,8 @@ def main():
     parser.add_argument("--base-destination", type=Path, default=Path("/opt/models/base"))
     parser.add_argument("--metadata", type=Path, default=Path(__file__).with_name("baked-model.json"))
     parser.add_argument("--verify-only", action="store_true")
+    parser.add_argument("--existing-model", type=Path)
+    parser.add_argument("--existing-base", type=Path)
     args = parser.parse_args()
     if args.verify_only:
         print(json.dumps(verify_baked_model(args.metadata)), flush=True)
@@ -157,7 +176,8 @@ def main():
         from huggingface_hub import snapshot_download
 
         bake(args.model_id, args.destination, args.base_destination, args.metadata,
-             download=snapshot_download)
+             download=snapshot_download, existing_model=args.existing_model,
+             existing_base=args.existing_base)
 
 
 if __name__ == "__main__":

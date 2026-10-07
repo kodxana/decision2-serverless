@@ -181,6 +181,40 @@ class AdapterBakingTests(unittest.TestCase):
         self.assertNotIn("base", info)
         self.assertEqual(verify_baked_model(self.metadata), info)
 
+    def test_existing_base_is_verified_but_not_downloaded_or_modified(self):
+        self.fake_download(repo_id=self.entry["base_model"], revision=self.entry["base_revision"],
+                           local_dir=self.base)
+        extra = self.base / "unused-tokenizer.json"
+        extra.write_text("{}")
+        info = bake(VEGA_MODEL, self.model, self.root / "unused", self.metadata,
+                    download=self.download, existing_base=self.base)
+        self.assertEqual(self.download.call_count, 1)
+        self.assertEqual(self.download.call_args.kwargs["repo_id"], VEGA_MODEL)
+        self.assertEqual(info["base"]["path"], str(self.base.resolve()))
+        self.assertTrue(extra.is_file())
+        (self.base / "weights.bin").write_bytes(b"corrupt")
+        with self.assertRaisesRegex(ValueError, "checksum mismatch"):
+            bake(VEGA_MODEL, self.model, self.root / "unused", self.metadata,
+                 download=self.download, existing_base=self.base)
+
+    def test_existing_model_downloads_only_base_and_rejects_modified_manifest(self):
+        self.fake_download(repo_id=VEGA_MODEL, revision=self.entry["revision"], local_dir=self.model)
+        manifest = self.model / "MODEL_MANIFEST.json"
+        catalog = self.root / "catalog.json"
+        catalog.write_text(json.dumps({VEGA_MODEL: {**self.entry,
+            "manifest_sha256": hashlib.sha256(manifest.read_bytes()).hexdigest()}}))
+        with patch("bake_model.CATALOG_PATH", catalog):
+            info = bake(VEGA_MODEL, self.root / "unused", self.base, self.metadata,
+                        download=self.download, existing_model=self.model)
+            self.assertEqual(self.download.call_count, 1)
+            self.assertEqual(self.download.call_args.kwargs["repo_id"], self.entry["base_model"])
+            self.assertEqual(info["path"], str(self.model.resolve()))
+            manifest.write_bytes(manifest.read_bytes() + b" ")
+            with self.assertRaisesRegex(ValueError, "manifest differs from the pinned"):
+                bake(VEGA_MODEL, self.root / "unused", self.base, self.metadata,
+                     download=self.download, existing_model=self.model)
+            self.assertEqual(self.download.call_count, 1)
+
 
 if __name__ == "__main__":
     unittest.main()
