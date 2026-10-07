@@ -1,0 +1,36 @@
+{
+  "vllm-sr/Decision-2.0-Kai-0.6B": {
+    "revision": "cd49ea3813fd8ba0928a9a23ef6c9a0f2f0cd764",
+    "approx_download_gb": 1.520,
+    "max_input_tokens": 8192
+  },
+  "vllm-sr/Decision-2.0-Eos-0.8B": {
+    "revision": "3594047d69f476f1d01cf84c593e213fc3a4dfe0",
+    "approx_download_gb": 2.040,
+    "max_input_tokens": 16384
+  },
+  "vllm-sr/Decision-2.0-Sol-2B": {
+    "revision": "64235bef55dad29387dd16da7c90e038bf2f0972",
+    "approx_download_gb": 4.811,
+    "max_input_tokens": 16384
+  },
+  "vllm-sr/Decision-2.0-Nox-4B": {
+    "revision": "25e8f67d1b486c647222df3aac640d2d5d736bbe",
+    "approx_download_gb": 9.716,
+    "max_input_tokens": 16384
+  },
+  "vllm-sr/Decision-2.0-Lux-9B": {
+    "revision": "78bf3c03d9147aeb30b641edfe0e30ed04887ca5",
+    "approx_download_gb": 17.948,
+    "max_input_tokens": 16384
+  },
+  "vllm-sr/Decision-2.0-Vega-27B": {
+    "revision": "7aec49ae11a18741706da549ab626b9052795fe7",
+    "approx_download_gb": 70.569,
+    "max_input_tokens": 32768,
+    "base_model": "Qwen/Qwen3.8-27B",
+    "base_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+    "approx_repository_gb": 14.983,
+    "approx_base_gb": 55.586
+  }
+}

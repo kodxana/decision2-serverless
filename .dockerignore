@@ -1,0 +1,11 @@
+*
+!Dockerfile
+!requirements.resolved.txt
+!constraints.txt
+!app.py
+!handler.py
+!models.json
+!bake_model.py
+!smoke_test.py
+!examples/
+!examples/*.json

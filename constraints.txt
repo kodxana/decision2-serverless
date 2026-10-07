@@ -1,0 +1,2 @@
+# Preserve the framework supplied by the pinned official PyTorch runtime image.
+torch==2.8.0

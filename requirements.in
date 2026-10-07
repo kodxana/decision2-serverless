@@ -1,0 +1,4 @@
+runpod==1.12.0
+transformers==5.18.0
+safetensors==0.8.0
+peft==0.21.2
